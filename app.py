@@ -23,9 +23,13 @@ def load_and_preprocess(csv_path: str):
     if "diagnosis" not in df.columns:
         raise ValueError("Expected column 'diagnosis' in the dataset.")
 
-    # Map diagnosis to 0/1 if needed
-    if df["diagnosis"].dtype == object:
-        df["diagnosis"] = df["diagnosis"].map({"B": 0, "M": 1})
+    # Normalize diagnosis to 0/1 (robust to object/string/int)
+    if df["diagnosis"].dtype == object or df["diagnosis"].dtype.name.startswith("string"):
+        df["diagnosis"] = df["diagnosis"].map({"B": 0, "M": 1}).fillna(df["diagnosis"])
+
+    # At this point it should be numeric-castable; force to int safely
+    df["diagnosis"] = pd.to_numeric(df["diagnosis"], errors="raise").astype(int)
+
 
     # Drop unwanted columns if they exist
     drop_cols = ["Unnamed: 32", "id"]

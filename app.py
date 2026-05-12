@@ -7,192 +7,288 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
+# ---------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------
+st.set_page_config(
+    page_title="SVC Breast Cancer App",
+    layout="wide"
+)
 
-st.set_page_config(page_title="SVC Breast Cancer App", layout="wide")
+st.title("Breast Cancer Classification using SVC")
+st.write(
+    "This app trains a Support Vector Classifier (SVC) model "
+    "using the breast cancer dataset and predicts whether "
+    "a tumor is Benign or Malignant."
+)
 
-st.title("Breast Cancer Classification (SVC)")
-st.write("This app trains an SVC model using `beast cancer.csv` and lets you predict for a new sample.")
+# ---------------------------------------------------
+# DATASET PATH
+# ---------------------------------------------------
+DATA_PATH = "breast cancer.csv"
 
-DATA_PATH = "beast cancer.csv"
+# ---------------------------------------------------
+# LOAD AND PREPROCESS DATA
+# ---------------------------------------------------
+def load_and_preprocess(csv_path):
 
-
-def load_and_preprocess(csv_path: str):
+    # Read CSV
     df = pd.read_csv(csv_path)
 
-    # Basic sanity checks
+    # Remove extra spaces from column names
+    df.columns = df.columns.str.strip()
+
+    # Check diagnosis column
     if "diagnosis" not in df.columns:
-        raise ValueError("Expected column 'diagnosis' in the dataset.")
+        st.error("Column 'diagnosis' not found in dataset.")
+        st.stop()
 
-    # Normalize diagnosis to 0/1 (robust to object/string/int)
-    if df["diagnosis"].dtype == object or df["diagnosis"].dtype.name.startswith("string"):
-        df["diagnosis"] = df["diagnosis"].map({"B": 0, "M": 1}).fillna(df["diagnosis"])
+    # Clean diagnosis values
+    df["diagnosis"] = (
+        df["diagnosis"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
 
-    # At this point it should be numeric-castable; force to int safely
-    df["diagnosis"] = pd.to_numeric(df["diagnosis"], errors="raise").astype(int)
+    # Convert labels
+    df["diagnosis"] = df["diagnosis"].map({
+        "B": 0,
+        "M": 1
+    })
 
+    # Remove invalid rows
+    df = df.dropna(subset=["diagnosis"])
 
-    # Drop unwanted columns if they exist
+    # Convert target
+    y = df["diagnosis"].astype(int)
+
+    # Drop unwanted columns
     drop_cols = ["Unnamed: 32", "id"]
     drop_cols = [c for c in drop_cols if c in df.columns]
+
     if drop_cols:
         df = df.drop(columns=drop_cols)
 
-    # Ensure label present and clean
-    df = df.dropna(subset=["diagnosis"]).copy()
-
-    # Separate X/y
-    y = df["diagnosis"].astype(int)
+    # Features
     X = df.drop(columns=["diagnosis"])
 
-    # Fill missing numeric values
+    # Convert all columns to numeric
     X = X.apply(pd.to_numeric, errors="coerce")
-    X = X.fillna(X.mean(numeric_only=True))
+
+    # Fill missing values
+    X = X.fillna(X.mean())
 
     feature_names = list(X.columns)
+
     return X, y, feature_names
 
 
+# ---------------------------------------------------
+# CACHE DATA
+# ---------------------------------------------------
 @st.cache_data(show_spinner=False)
 def get_data():
-    X, y, feature_names = load_and_preprocess(DATA_PATH)
-    return X, y, feature_names
+    return load_and_preprocess(DATA_PATH)
 
 
 X, y, feature_names = get_data()
 
-# Sidebar controls
-st.sidebar.header("SVC Controls")
+# ---------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------
+st.sidebar.header("Model Controls")
 
-kernel = "rbf"  # match svc1.ipynb
+kernel = st.sidebar.selectbox(
+    "Kernel",
+    ["linear", "rbf", "poly", "sigmoid"],
+    index=1
+)
 
-# Match svc1.ipynb random_state
+C = st.sidebar.slider(
+    "C (Regularization)",
+    min_value=0.01,
+    max_value=50.0,
+    value=1.0,
+    step=0.01
+)
+
+gamma = st.sidebar.selectbox(
+    "Gamma",
+    ["scale", "auto"],
+    index=0
+)
+
+test_size = st.sidebar.slider(
+    "Test Size",
+    min_value=0.1,
+    max_value=0.5,
+    value=0.2,
+    step=0.05
+)
+
+probability = st.sidebar.toggle(
+    "Enable Probability",
+    value=False
+)
+
 random_state = 42
 
-# Hyperparameters (optional UI)
-# svc1.ipynb did not specify C/gamma explicitly; default for SVC is C=1.0, gamma='scale'
-# but we let user tune while keeping kernel + random_state consistent.
-probability = st.sidebar.toggle("Enable probability estimates", value=False)
-
-C = st.sidebar.slider("C (regularization)", min_value=0.01, max_value=50.0, value=1.0, step=0.01)
-gamma = st.sidebar.selectbox("gamma", options=["scale", "auto"], index=0)
-
-# Train/test split
-st.sidebar.subheader("Train/Test")
-test_size = st.sidebar.slider("Test size", min_value=0.05, max_value=0.5, value=0.2, step=0.05)
-
-
+# ---------------------------------------------------
+# TRAIN MODEL
+# ---------------------------------------------------
 def train_model(X, y):
+
     X_train, X_test, y_train, y_test = train_test_split(
         X,
         y,
         test_size=test_size,
         random_state=random_state,
-        stratify=y,
+        stratify=y
     )
 
+    # Scaling
     scaler = StandardScaler()
+
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
+    # Model
     model = SVC(
         kernel=kernel,
-        C=float(C),
+        C=C,
         gamma=gamma,
-        probability=bool(probability),
-        random_state=random_state,
+        probability=probability,
+        random_state=random_state
     )
 
+    # Train
     model.fit(X_train_scaled, y_train)
 
+    # Predict
     y_pred = model.predict(X_test_scaled)
 
+    # Metrics
     metrics = {
         "accuracy": accuracy_score(y_test, y_pred),
         "confusion_matrix": confusion_matrix(y_test, y_pred),
-        "classification_report": classification_report(y_test, y_pred, digits=4),
+        "classification_report": classification_report(
+            y_test,
+            y_pred,
+            digits=4
+        )
     }
 
     return model, scaler, metrics
 
 
+# ---------------------------------------------------
+# TRAINING
+# ---------------------------------------------------
 with st.spinner("Training model..."):
     model, scaler, metrics = train_model(X, y)
 
-
-col1, col2 = st.columns([1, 1])
+# ---------------------------------------------------
+# RESULTS
+# ---------------------------------------------------
+col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Model Performance")
-    st.metric("Accuracy", f"{metrics['accuracy']:.4f}")
+    st.subheader("Accuracy")
+    st.metric(
+        label="Model Accuracy",
+        value=f"{metrics['accuracy']:.4f}"
+    )
 
 with col2:
     st.subheader("Confusion Matrix")
+
     cm = metrics["confusion_matrix"]
-    cm_df = pd.DataFrame(cm, index=["Actual: Benign (0)", "Actual: Malignant (1)"], columns=["Pred: Benign (0)", "Pred: Malignant (1)"])
+
+    cm_df = pd.DataFrame(
+        cm,
+        index=[
+            "Actual Benign (0)",
+            "Actual Malignant (1)"
+        ],
+        columns=[
+            "Predicted Benign (0)",
+            "Predicted Malignant (1)"
+        ]
+    )
+
     st.dataframe(cm_df, use_container_width=True)
 
+# Classification report
 st.subheader("Classification Report")
 st.text(metrics["classification_report"])
 
-
+# ---------------------------------------------------
+# PREDICTION SECTION
+# ---------------------------------------------------
 st.divider()
 
-st.subheader("Predict for a New Sample")
-st.write("Enter values for all features. The app will scale them using the same `StandardScaler` learned during training.")
+st.subheader("Predict New Sample")
+
+st.write(
+    "Enter values for all features below."
+)
 
 inputs = {}
 
-# Create inputs in a stable order
-with st.expander("Input features", expanded=True):
+with st.expander("Input Features", expanded=True):
+
     for name in feature_names:
-        # make sure inputs dict is updated for every feature
 
-        # reasonable default range from dataset values is unknown; use broad min/max
-        # Also keep step small enough for user adjustment.
-        val = float(X[name].median())
-        min_val = float(X[name].quantile(0.01))
-        max_val = float(X[name].quantile(0.99))
+        median_val = float(X[name].median())
 
-        # Expand bounds a bit to reduce clipping feel
-        span = (max_val - min_val) if max_val > min_val else 1.0
-        min_val -= 0.1 * span
-        max_val += 0.1 * span
+        min_val = float(X[name].min())
+        max_val = float(X[name].max())
 
         inputs[name] = st.number_input(
-            name,
-            value=val,
+            label=name,
+            value=median_val,
             min_value=min_val,
             max_value=max_val,
-            step=0.001,
+            step=0.001
         )
 
-
-predict_btn = st.button("Predict", type="primary")
+# ---------------------------------------------------
+# PREDICT BUTTON
+# ---------------------------------------------------
+predict_btn = st.button(
+    "Predict",
+    type="primary"
+)
 
 if predict_btn:
-    st.write("Using current input values...")
 
-    # Create dataframe to preserve feature names for sklearn warnings/debugging
-    sample_df = pd.DataFrame([[inputs[n] for n in feature_names]], columns=feature_names)
-    st.write("First 5 feature values:")
-    st.dataframe(sample_df.iloc[:, :5], use_container_width=True)
+    sample_df = pd.DataFrame(
+        [[inputs[col] for col in feature_names]],
+        columns=feature_names
+    )
 
+    # Scale input
     scaled_sample = scaler.transform(sample_df)
 
-    pred = model.predict(scaled_sample)[0]
+    # Prediction
+    prediction = model.predict(scaled_sample)[0]
 
-    label = "Malignant (M)" if pred == 1 else "Benign (B)"
-
-    st.success(f"Prediction: {label}")
-
-    if probability:
-        proba = model.predict_proba(scaled_sample)[0]
-        p_benign = float(proba[0])
-        p_malignant = float(proba[1])
-        st.info(f"Probability — Benign: {p_benign:.4f} | Malignant: {p_malignant:.4f}")
+    # Display result
+    if prediction == 1:
+        st.error("Prediction: Malignant (M)")
     else:
-        st.caption("Probability estimates are disabled. Enable them in the sidebar to display class probabilities.")
+        st.success("Prediction: Benign (B)")
+
+    # Probabilities
+    if probability:
+
+        probs = model.predict_proba(scaled_sample)[0]
+
+        st.info(
+            f"Benign Probability: {probs[0]:.4f}\n\n"
+            f"Malignant Probability: {probs[1]:.4f}"
+        )
+
 else:
-    st.caption("Set the feature values above, then click Predict.")
-
-
+    st.caption("Enter feature values and click Predict.")
